@@ -1,0 +1,147 @@
+package com.yourname.autobuy.gui;
+
+import com.mojang.blaze3d.matrix.MatrixStack;
+import com.yourname.autobuy.data.AutoBuyManager;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.widget.TextFieldWidget;
+import net.minecraft.client.gui.widget.button.Button;
+import net.minecraft.util.text.StringTextComponent;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class AutoBuyScreen extends Screen {
+
+    private int scrollOffset = 0;
+    private static final int SLOT_HEIGHT = 25;
+    private List<AutoBuySlot> slots = new ArrayList<>();
+
+    public AutoBuyScreen() {
+        super(new StringTextComponent("AutoBuy GUI"));
+    }
+
+    @Override
+    protected void init() {
+        int yStart = 20;
+        int index = 0;
+
+        slots.clear();
+
+        for (String key : AutoBuyManager.getItems().keySet()) {
+            AutoBuyManager.AutoBuyItem item = AutoBuyManager.getItems().get(key);
+
+            AutoBuySlot slot = new AutoBuySlot(this.width / 2 - 100, yStart + index * SLOT_HEIGHT, 200, SLOT_HEIGHT, item);
+            slots.add(slot);
+            index++;
+        }
+    }
+
+    @Override
+    public void render(MatrixStack matrixStack, int mouseX, int mouseY, float partialTicks) {
+        this.renderBackground(matrixStack);
+
+        // Scrollable render
+        int startY = 20;
+        int visibleSlots = (this.height - 40) / SLOT_HEIGHT;
+
+        for (int i = 0; i < visibleSlots; i++) {
+            int slotIndex = i + scrollOffset;
+            if (slotIndex >= slots.size()) break;
+            slots.get(slotIndex).render(matrixStack, mouseX, mouseY);
+        }
+
+        super.render(matrixStack, mouseX, mouseY, partialTicks);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double delta) {
+        int maxOffset = Math.max(0, slots.size() - (this.height - 40) / SLOT_HEIGHT);
+        scrollOffset -= delta;
+        if (scrollOffset < 0) scrollOffset = 0;
+        if (scrollOffset > maxOffset) scrollOffset = maxOffset;
+        return true;
+    }
+
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        int startY = 20;
+        int visibleSlots = (this.height - 40) / SLOT_HEIGHT;
+        for (int i = 0; i < visibleSlots; i++) {
+            int slotIndex = i + scrollOffset;
+            if (slotIndex >= slots.size()) break;
+            slots.get(slotIndex).mouseClicked(mouseX, mouseY, button);
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    // Вспомогательный класс для одного слота
+    private static class AutoBuySlot {
+        private final int x, y, width, height;
+        private final AutoBuyManager.AutoBuyItem item;
+        private Button toggleButton;
+        private TextFieldWidget priceField;
+
+        public AutoBuySlot(int x, int y, int width, int height, AutoBuyManager.AutoBuyItem item) {
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+            this.item = item;
+            init();
+        }
+
+        private void init() {
+            toggleButton = new Button(x + width - 50, y, 50, 20,
+                    new StringTextComponent(item.enabled ? "ON" : "OFF"), button -> {
+                        item.enabled = !item.enabled;
+                        button.setMessage(new StringTextComponent(item.enabled ? "ON" : "OFF"));
+                    });
+            priceField = new TextFieldWidget(null, x, y, 50, 20, new StringTextComponent(String.valueOf(item.maxPrice)));
+            priceField.setText(String.valueOf(item.maxPrice));
+        }
+
+        public void render(MatrixStack matrixStack, int mouseX, int mouseY) {
+            // Рисуем фон с подсветкой активного
+            fill(matrixStack, x, y, x + width, y + height, item.enabled ? 0xFF88FF88 : 0xFF555555);
+
+            // Рисуем название
+            drawString(matrixStack, Minecraft.getInstance().font, item.item.getName(item.item.getDefaultInstance()).getString(), x + 5, y + 6, 0xFFFFFF);
+
+            // Рисуем поля
+            toggleButton.x = x + width - 50;
+            toggleButton.y = y;
+            toggleButton.render(matrixStack, 0, 0, 0);
+
+            priceField.x = x + width - 110;
+            priceField.y = y;
+            priceField.render(matrixStack, 0, 0, 0);
+
+            // Сохраняем цену при изменении
+            try {
+                item.maxPrice = Integer.parseInt(priceField.getText());
+            } catch (NumberFormatException ignored) {}
+        }
+
+        public void mouseClicked(double mouseX, double mouseY, int button) {
+            toggleButton.onMouseClick(mouseX, mouseY, button);
+            priceField.mouseClicked(mouseX, mouseY, button);
+        }
+    }
+}
+package com.yourname.autobuy.commands;
+
+import com.mojang.brigadier.CommandDispatcher;
+import net.minecraft.client.Minecraft;
+import net.minecraft.command.CommandSource;
+import net.minecraft.command.Commands;
+
+public class AutoBuyGuiCommand {
+
+    public static void register(CommandDispatcher<CommandSource> dispatcher) {
+        dispatcher.register(Commands.literal("autobuy")
+                .executes(context -> {
+                    Minecraft.getInstance().setScreen(new com.yourname.autobuy.gui.AutoBuyScreen());
+                    return 1;
+                }));
+    }
+}
