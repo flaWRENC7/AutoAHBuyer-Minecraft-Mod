@@ -1,0 +1,170 @@
+package com.example.autoah;
+
+import com.mojang.blaze3d.matrix.MatrixStack;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.screen.inventory.ContainerScreen;
+import net.minecraft.client.gui.widget.TextFieldWidget;
+import net.minecraft.client.gui.widget.button.Button;
+import net.minecraft.inventory.container.Container;
+import net.minecraft.inventory.container.Slot;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
+import net.minecraft.util.ResourceLocation;
+import net.minecraft.util.text.StringTextComponent;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.client.event.GuiOpenEvent;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.TickEvent;
+import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.registries.ForgeRegistries;
+
+import java.util.*;
+import java.util.stream.Collectors;
+
+@Mod("autoahbuyer")
+public class AutoAhBuyer {
+
+    private static final Minecraft mc = Minecraft.getInstance();
+
+    private static boolean enabled = false;
+    private static long lastAction = 0;
+    private static final int DELAY_MS = 400;
+
+    private static final Map<ResourceLocation, Integer> targets = new HashMap<>();
+
+    private static ContainerScreen<?> currentAuction = null;
+    private static boolean waitingConfirm = false;
+
+    public AutoAhBuyer() {
+        MinecraftForge.EVENT_BUS.register(this);
+    }
+
+    /* ================= GUI OPEN ================= */
+
+    @SubscribeEvent
+    public void onGuiOpen(GuiOpenEvent e) {
+        if (e.getGui() instanceof ContainerScreen<?>) {
+            ContainerScreen<?> cs = (ContainerScreen<?>) e.getGui();
+            String title = cs.getTitle().getString();
+
+            if (title.contains("Список всех категорий")) {
+                currentAuction = cs;
+            } else if (currentAuction != null && title.contains("Подтверд")) {
+                // confirmation window
+                currentAuction = cs;
+                waitingConfirm = true;
+            } else {
+                currentAuction = null;
+                waitingConfirm = false;
+            }
+        }
+    }
+
+    /* ================= TICK ================= */
+
+    @SubscribeEvent
+    public void onTick(TickEvent.ClientTickEvent e) {
+        if (e.phase != TickEvent.Phase.END) return;
+        if (!enabled) return;
+        if (currentAuction == null) return;
+        if (System.currentTimeMillis() - lastAction < DELAY_MS) return;
+
+        Container container = currentAuction.getMenu();
+
+        // confirmation window
+        if (waitingConfirm) {
+            int confirmSlot = container.slots.size() / 2 + 1;
+            click(container.windowId, confirmSlot);
+            waitingConfirm = false;
+            lastAction = System.currentTimeMillis();
+            return;
+        }
+
+        for (int i = 0; i < container.slots.size(); i++) {
+            Slot slot = container.slots.get(i);
+            ItemStack stack = slot.getItem();
+            if (stack.isEmpty()) continue;
+
+            ResourceLocation id = stack.getItem().getRegistryName();
+            if (!targets.containsKey(id)) continue;
+
+            int price = parsePrice(stack);
+            if (price > 0 && price <= targets.get(id)) {
+                click(container.windowId, i);
+                lastAction = System.currentTimeMillis();
+                return;
+            }
+        }
+    }
+
+    /* ================= UTILS ================= */
+
+    private static void click(int window, int slot) {
+        mc.gameMode.handleInventoryMouseClick(
+                window, slot, 0,
+                net.minecraft.inventory.container.ClickType.PICKUP,
+                mc.player
+        );
+    }
+
+    private static int parsePrice(ItemStack stack) {
+        List<String> lore = stack.getTooltipLines(mc.player, net.minecraft.client.util.ITooltipFlag.TooltipFlags.NORMAL)
+                .stream().map(t -> t.getString()).collect(Collectors.toList());
+
+        for (String s : lore) {
+            if (s.contains("Стоимость")) {
+                return Integer.parseInt(s.replaceAll("\\D", ""));
+            }
+        }
+        return -1;
+    }
+
+    /* ================= SETTINGS GUI ================= */
+
+    public static class SettingsScreen extends Screen {
+
+        private TextFieldWidget search;
+        private TextFieldWidget price;
+        private Item selected;
+
+        protected SettingsScreen() {
+            super(new StringTextComponent("AutoAH Buyer"));
+        }
+
+        @Override
+        protected void init() {
+            search = new TextFieldWidget(font, width / 2 - 100, 40, 200, 20, new StringTextComponent(""));
+            price = new TextFieldWidget(font, width / 2 - 100, 70, 200, 20, new StringTextComponent(""));
+
+            addWidget(search);
+            addWidget(price);
+
+            addButton(new Button(width / 2 - 100, 100, 200, 20,
+                    new StringTextComponent("Добавить"), b -> addItem()));
+
+            addButton(new Button(width / 2 - 100, 130, 200, 20,
+                    new StringTextComponent(enabled ? "Выключить" : "Включить"),
+                    b -> enabled = !enabled));
+        }
+
+        private void addItem() {
+            String text = search.getValue().toLowerCase();
+            selected = ForgeRegistries.ITEMS.getValues().stream()
+                    .filter(i -> i.getRegistryName().toString().contains(text))
+                    .findFirst().orElse(null);
+
+            if (selected != null) {
+                targets.put(selected.getRegistryName(), Integer.parseInt(price.getValue()));
+            }
+        }
+
+        @Override
+        public void render(MatrixStack ms, int x, int y, float f) {
+            renderBackground(ms);
+            super.render(ms, x, y, f);
+            drawCenteredString(ms, font, "AutoAH Buyer", width / 2, 10, 0xFFFFFF);
+        }
+    }
+}
